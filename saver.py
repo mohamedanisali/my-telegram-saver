@@ -1,69 +1,91 @@
-from telethon import TelegramClient, events
 import os
 import asyncio
+import threading
 from flask import Flask
-from threading import Thread
+from telethon import TelegramClient, events
 
-# --- إعدادات البوابة الوهمية لـ Render ---
-app = Flask('')
+# --- إعدادات الحساب (تأكد من بياناتك) ---
+API_ID = 1234567  # رقم الـ ID
+API_HASH = 'your_api_hash'  # الـ Hash
+BOT_TOKEN = 'your_bot_token'  # توكن البوت
+
+# --- إعداد تطبيق ويب (لإبقاء السيرفر صاحي) ---
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "البوت شغال زي الفل!"
+    return "✅ البوت شغال ومستقر بنسبة 100%!"
 
-def run():
-    app.run(host='0.0.0.0', port=8080)
+# --- إعداد عملاء التيليجرام ---
+bot = TelegramClient('bot_session', API_ID, API_HASH)
+user = TelegramClient('user_session', API_ID, API_HASH)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# دالة لحساب النسبة المئوية للتحميل والرفع
+async def progress_callback(current, total, event, action_verb):
+    percentage = (current / total) * 100
+    if int(percentage) % 10 == 0:  # يحدث الرسالة كل 10% عشان ميعملش سبام
+        try:
+            await event.edit(f'⏳ جاري {action_verb}: {percentage:.1f}%...')
+        except:
+            pass
 
-# --- بياناتك (محفوظة زي ما هي) ---
-API_ID = 35688859
-API_HASH = 'f5d5a60d655bce7925675c711731ca1b'
-BOT_TOKEN = '8697118092:AAEHucNVoixdd3FK-vF7qCYxHzJkpz5zYh8'
-OWNER_ID = 5344366814
-# ---------------------------------------
+@bot.on(events.NewMessage(pattern='/start'))
+async def start(event):
+    await event.respond('🚀 يا هلا! ابعت لي رابط فيديو من قناة مقيدة وهسحبهولك بالثانية.')
+
+@bot.on(events.NewMessage)
+async def handler(event):
+    if 't.me/' in event.text:
+        link = event.text
+        status_msg = await event.respond('⏳ جاري فحص الرابط...')
+        
+        try:
+            parts = link.split('/')
+            channel_username = parts[-2]
+            msg_id = int(parts[-1])
+            
+            msg = await user.get_messages(channel_username, ids=msg_id)
+            
+            if msg and msg.media:
+                await status_msg.edit('📂 تم العثور على الميديا.. بجهز المحرك!')
+                
+                # التحميل مع إظهار النسبة المئوية
+                path = await user.download_media(
+                    msg.media, 
+                    progress_callback=lambda c, t: progress_callback(c, t, status_msg, "التحميل من المصدر")
+                )
+                
+                await status_msg.edit('📤 جاري الرفع إليك الآن (ثواني معدودة)...')
+                
+                # الرفع مع إظهار النسبة المئوية
+                await bot.send_file(
+                    event.chat_id, 
+                    path, 
+                    caption="✅ تم السحب بنجاح!",
+                    progress_callback=lambda c, t: progress_callback(c, t, status_msg, "الرفع لتيليجرام")
+                )
+                
+                if os.path.exists(path):
+                    os.remove(path)
+                
+                await status_msg.delete()
+            else:
+                await status_msg.edit('❌ الرابط ده مفيش فيه فيديو أو صورة.')
+                
+        except Exception as e:
+            await status_msg.edit(f'❌ حصلت مشكلة: {str(e)}')
 
 async def main():
-    bot = TelegramClient('bot_session', API_ID, API_HASH)
-    user = TelegramClient('user_session', API_ID, API_HASH)
-
-    print("🔗 جاري الاتصال بخوادم تيليجرام...")
+    print("🔗 جاري تشغيل المحركات...")
     await bot.start(bot_token=BOT_TOKEN)
     await user.start()
-    
-    print("✅ البوت شغال الآن على السيرفر!")
-
-    @bot.on(events.NewMessage(pattern='/start'))
-    async def start(event):
-        if event.sender_id == OWNER_ID:
-            await event.reply("أهلاً بك يا ريس! ابعت الرابط وأنا هسحبهولك.")
-
-    @bot.on(events.NewMessage(pattern=r'https?://t\.me/'))
-    async def downloader(event):
-        if event.sender_id != OWNER_ID: return
-        url = event.text.strip()
-        status = await event.reply("⏳ جاري السحب من السيرفر...")
-        try:
-            parts = url.split('/')
-            msg_id = int(parts[-1])
-            peer = int('-100' + parts[-2]) if '/c/' in url else parts[-2]
-            msg = await user.get_messages(peer, ids=msg_id)
-            if msg and msg.media:
-                path = await user.download_media(msg)
-                await bot.send_file(event.chat_id, path, caption=msg.text)
-                if os.path.exists(path): os.remove(path)
-                await status.delete()
-            else:
-                await status.edit("❌ مفيش ميديا هنا.")
-        except Exception as e:
-            await status.edit(f"⚠️ خطأ: {str(e)}")
-
+    print("✅ البوت الآن في وضع الطيران المستقر!")
     await bot.run_until_disconnected()
 
-if __name__ == '__main__':
-    keep_alive() # تشغيل البوابة الوهمية
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False)).start()
+    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
